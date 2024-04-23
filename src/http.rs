@@ -1,6 +1,7 @@
-use crate::{models::MessageResponse, GatewayClient, REST_URL};
+use crate::{models::HttpResponse, GatewayClient, REST_URL};
 use anyhow::Result;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::{fmt::Display, time::Duration};
 use todel::{ErrorResponse, InstanceInfo, Message, MessageCreate};
 use tokio::time;
@@ -55,29 +56,30 @@ impl HttpClient {
         }
     }
 
-    /// Send a message
-    pub async fn send_message<C: Display>(&self, content: C) -> Result<Message> {
+    async fn request<T: for<'a> Deserialize<'a>, B: Serialize + Sized>(
+        &self,
+        path: &str,
+        body: Option<B>,
+    ) -> Result<HttpResponse<T>> {
         loop {
             match self
                 .client
-                .post(format!("{}/messages", self.rest_url))
+                .post(format!("{}/{}", self.rest_url, path))
                 .header("Authorization", &self.token)
-                .json(&MessageCreate {
-                    content: content.to_string(),
-                    disguise: None,
-                })
+                .json(&body)
                 .send()
                 .await?
-                .json::<MessageResponse>()
+                .json::<HttpResponse<T>>()
                 .await
             {
-                Ok(MessageResponse::Message(msg)) => {
-                    break Ok(msg);
+                Ok(HttpResponse::Success(data)) => {
+                    break Ok(HttpResponse::Success(data));
                 }
-                Ok(MessageResponse::Error(err)) => match err {
+                Ok(HttpResponse::Error(err)) => match err {
                     ErrorResponse::RateLimited { retry_after, .. } => {
                         log::info!(
-                            "Client got ratelimited at /messages, retrying in {}ms",
+                            "Client got ratelimited at /{}, retrying in {}ms",
+                            path,
                             retry_after
                         );
                         time::sleep(Duration::from_millis(retry_after)).await;
@@ -97,6 +99,21 @@ impl HttpClient {
                     break Err(err)?;
                 }
             }
+        }
+    }
+
+    /// Send a message
+    pub async fn send_message<C: Display>(&self, content: C) -> Result<Message> {
+        let message = MessageCreate {
+            content: content.to_string(),
+            disguise: None,
+        };
+        match self
+            .request::<Message, MessageCreate>("messages", Some(message))
+            .await?
+        {
+            HttpResponse::Success(data) => Ok(data),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not send message: {:?}", err)),
         }
     }
 
