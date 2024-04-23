@@ -1,9 +1,9 @@
 use crate::{models::HttpResponse, GatewayClient, REST_URL};
 use anyhow::Result;
-use reqwest::Client;
+use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::{fmt::Display, time::Duration};
+use serde_json::json;
+use std::{fmt::Display, str::FromStr, time::Duration};
 use todel::{
     ErrorResponse, InstanceInfo, Message, MessageCreate, MessageDisguise,
     PasswordDeleteCredentials, ResetPassword, Session, SessionCreate, SessionCreated, UpdateUser,
@@ -70,7 +70,10 @@ impl HttpClient {
         loop {
             match self
                 .client
-                .post(format!("{}/{}", self.rest_url, path))
+                .request(
+                    Method::from_str(method)?,
+                    format!("{}/{}", self.rest_url, path),
+                )
                 .header("Authorization", &self.token)
                 .json(&body)
                 .send()
