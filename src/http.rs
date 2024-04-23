@@ -2,8 +2,12 @@ use crate::{models::HttpResponse, GatewayClient, REST_URL};
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{fmt::Display, time::Duration};
-use todel::{ErrorResponse, InstanceInfo, Message, MessageCreate};
+use todel::{
+    ErrorResponse, InstanceInfo, Message, MessageCreate, MessageDisguise,
+    PasswordDeleteCredentials, Session, SessionCreate, SessionCreated,
+};
 use tokio::time;
 
 /// Simple Http client
@@ -117,11 +121,77 @@ impl HttpClient {
         }
     }
 
+    /// Send a message with a disguise
+    pub async fn send_message_with_disguise<C: Display>(
+        &self,
+        content: C,
+        disguise: MessageDisguise,
+    ) -> Result<Message> {
+        let message = MessageCreate {
+            content: content.to_string(),
+            disguise: Some(disguise),
+        };
+        match self
+            .request::<Message, MessageCreate>("messages", Some(message))
+            .await?
+        {
+            HttpResponse::Success(data) => Ok(data),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not send message: {:?}", err)),
+        }
+    }
+
     /// Create a [`GatewayClient`] using the connected instance's instance info
     /// pandemonium url if any.
     pub async fn create_gateway(&mut self) -> Result<GatewayClient> {
         let info = self.get_instance_info().await?;
         let gateway_url = info.pandemonium_url.clone();
         Ok(GatewayClient::new(&self.token).gateway_url(gateway_url))
+    }
+
+    /// Create a session.
+    pub async fn create_session(
+        &self,
+        identifier: String,
+        password: String,
+        platform: String,
+        client: String,
+    ) -> Result<SessionCreated> {
+        match self
+            .request::<SessionCreated, SessionCreate>(
+                "sessions",
+                Some(SessionCreate {
+                    identifier,
+                    password,
+                    platform,
+                    client,
+                }),
+            )
+            .await?
+        {
+            HttpResponse::Success(session) => Ok(session),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not create session: {:?}", err)),
+        }
+    }
+
+    /// Delete a session.
+    pub async fn delete_session(&self, session_id: u64, password: String) -> Result<()> {
+        match self
+            .request::<(), PasswordDeleteCredentials>(
+                &format!("sessions/{}", session_id),
+                Some(PasswordDeleteCredentials { password }),
+            )
+            .await?
+        {
+            HttpResponse::Success(_) => Ok(()),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not delete session: {:?}", err)),
+        }
+    }
+
+    /// Get all sessions.
+    pub async fn get_sessions(&self) -> Result<Vec<Session>> {
+        match self.request::<Vec<Session>, ()>("sessions", None).await? {
+            HttpResponse::Success(sessions) => Ok(sessions),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not get sessions: {:?}", err)),
+        }
     }
 }
