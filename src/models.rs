@@ -3,8 +3,8 @@ use todel::{ErrorResponse, Message, Status, User};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum MessageResponse {
-    Message(Message),
+pub(crate) enum HttpResponse<T> {
+    Success(T),
     Error(ErrorResponse),
 }
 

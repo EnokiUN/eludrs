@@ -104,10 +104,6 @@ impl Events {
                     heartbeat_interval, ..
                 }) = serde_json::from_str(&msg)
                 {
-                    time::sleep(Duration::from_millis(
-                        self.rng.lock().await.gen_range(0..heartbeat_interval),
-                    ))
-                    .await;
                     if let Err(err) = tx
                         .send(WSMessage::Text(
                             serde_json::to_string(&ClientPayload::Authenticate(self.token.clone()))
@@ -117,7 +113,9 @@ impl Events {
                     {
                         bail!("Encountered error while authenticating {:?}", err);
                     };
+                    let initial_heartbeat = self.rng.lock().await.gen_range(0..heartbeat_interval);
                     *ping = Some(tokio::spawn(async move {
+                        time::sleep(Duration::from_millis(initial_heartbeat)).await;
                         loop {
                             match tx
                                 .send(WSMessage::Text(
