@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use todel::{ErrorResponse, Message, Status, User};
+use todel::models::{
+    Category, CategoryEdit, ErrorResponse, Message, Sphere, SphereChannel, SphereChannelEdit,
+    Status, User,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -15,12 +18,35 @@ pub enum Event {
     Authenticated,
     /// A message that has just been sent over the gateway
     Message(Message),
-    /// The old and new data after a user has been updated
-    UserUpdate { old_user: Option<User>, user: User },
-    /// The old and new data after a user's status has been updated
-    PresenceUpdate {
-        old_status: Option<Status>,
-        user_id: u64,
-        status: Status,
+    /// A users data has been updated
+    UserUpdate(User),
+    /// A user's status has been updated
+    PresenceUpdate { user_id: u64, status: Status },
+    /// This user has joined a sphere
+    SphereJoin(Sphere),
+    /// A user has joined a sphere
+    SphereMemberJoin { user: User, sphere_id: u64 },
+    /// A category has been created
+    CategoryCreate { category: Category, sphere_id: u64 },
+    /// A category has been edited
+    CategoryEdit {
+        data: CategoryEdit,
+        category_id: u64,
+        sphere_id: u64,
     },
+    /// A category has been deleted
+    CategoryDelete { category_id: u64, sphere_id: u64 },
+    /// A channel has been created
+    SphereChannelCreate {
+        channel: SphereChannel,
+        sphere_id: u64,
+    },
+    /// A channel has been edited
+    SphereChannelEdit {
+        data: SphereChannelEdit,
+        channel_id: u64,
+        sphere_id: u64,
+    },
+    /// A channel has been deleted
+    SphereChannelDelete { channel_id: u64, sphere_id: u64 },
 }

@@ -10,7 +10,7 @@ use std::{
 use anyhow::{bail, Result};
 use futures::{stream::SplitStream, SinkExt, Stream, StreamExt};
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use todel::{ClientPayload, ServerPayload, User};
+use todel::models::{ClientPayload, ServerPayload, Sphere, User};
 use tokio::{net::TcpStream, sync::Mutex, task::JoinHandle, time};
 use tokio_tungstenite::{
     connect_async, tungstenite::Message as WSMessage, MaybeTlsStream, WebSocketStream,
@@ -24,7 +24,7 @@ type WsReceiver = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 #[derive(Default, Debug, Clone)]
 pub struct GatewayData {
     user: Option<User>,
-    users: HashMap<u64, User>,
+    spheres: HashMap<u64, Sphere>,
 }
 
 /// A Stream of Pandemonium events
@@ -253,29 +253,87 @@ impl Stream for Events {
                                     ServerPayload::Pong
                                     | ServerPayload::RateLimit { .. }
                                     | ServerPayload::Hello { .. } => {}
-                                    ServerPayload::Authenticated { user, users } => {
+                                    ServerPayload::Authenticated { user, spheres } => {
                                         data.user = Some(user);
-                                        users.into_iter().for_each(|u| {
-                                            data.users.insert(u.id, u);
+                                        spheres.into_iter().for_each(|s| {
+                                            data.spheres.insert(s.id, s);
                                         });
                                         break Poll::Ready(Some(Event::Authenticated));
                                     }
                                     ServerPayload::MessageCreate(msg) => {
                                         break Poll::Ready(Some(Event::Message(msg)));
                                     }
-                                    ServerPayload::UserUpdate(update) => {
-                                        let user = data.users.insert(update.id, update.clone());
-                                        break Poll::Ready(Some(Event::UserUpdate {
-                                            old_user: user,
-                                            user: update,
-                                        }));
+                                    ServerPayload::UserUpdate(user) => {
+                                        break Poll::Ready(Some(Event::UserUpdate(user)));
                                     }
                                     ServerPayload::PresenceUpdate { status, user_id } => {
-                                        let user = data.users.get(&user_id);
                                         break Poll::Ready(Some(Event::PresenceUpdate {
-                                            old_status: user.map(|u| u.status.clone()),
                                             user_id,
                                             status,
+                                        }));
+                                    }
+                                    ServerPayload::SphereJoin(sphere) => {
+                                        break Poll::Ready(Some(Event::SphereJoin(sphere)));
+                                    }
+                                    ServerPayload::SphereMemberJoin { user, sphere_id } => {
+                                        break Poll::Ready(Some(Event::SphereMemberJoin {
+                                            user,
+                                            sphere_id,
+                                        }));
+                                    }
+                                    ServerPayload::CategoryCreate {
+                                        category,
+                                        sphere_id,
+                                    } => {
+                                        break Poll::Ready(Some(Event::CategoryCreate {
+                                            category,
+                                            sphere_id,
+                                        }));
+                                    }
+                                    ServerPayload::CategoryEdit {
+                                        data,
+                                        category_id,
+                                        sphere_id,
+                                    } => {
+                                        break Poll::Ready(Some(Event::CategoryEdit {
+                                            data,
+                                            category_id,
+                                            sphere_id,
+                                        }));
+                                    }
+                                    ServerPayload::CategoryDelete {
+                                        category_id,
+                                        sphere_id,
+                                    } => {
+                                        break Poll::Ready(Some(Event::CategoryDelete {
+                                            category_id,
+                                            sphere_id,
+                                        }));
+                                    }
+                                    ServerPayload::SphereChannelCreate { channel, sphere_id } => {
+                                        break Poll::Ready(Some(Event::SphereChannelCreate {
+                                            channel,
+                                            sphere_id,
+                                        }));
+                                    }
+                                    ServerPayload::SphereChannelEdit {
+                                        data,
+                                        channel_id,
+                                        sphere_id,
+                                    } => {
+                                        break Poll::Ready(Some(Event::SphereChannelEdit {
+                                            data,
+                                            channel_id,
+                                            sphere_id,
+                                        }));
+                                    }
+                                    ServerPayload::SphereChannelDelete {
+                                        channel_id,
+                                        sphere_id,
+                                    } => {
+                                        break Poll::Ready(Some(Event::SphereChannelDelete {
+                                            channel_id,
+                                            sphere_id,
                                         }));
                                     }
                                 }

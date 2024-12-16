@@ -4,7 +4,7 @@ use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{fmt::Display, str::FromStr, time::Duration};
-use todel::{
+use todel::models::{
     ErrorResponse, InstanceInfo, Message, MessageCreate, MessageDisguise,
     PasswordDeleteCredentials, ResetPassword, Session, SessionCreate, SessionCreated, UpdateUser,
     UpdateUserProfile, User, UserCreate,
@@ -116,6 +116,7 @@ impl HttpClient {
         let message = MessageCreate {
             content: content.to_string(),
             disguise: None,
+            reference: None, // TODO: Add references
         };
         match self
             .request::<Message, MessageCreate>("POST", "messages", Some(message))
@@ -135,6 +136,7 @@ impl HttpClient {
         let message = MessageCreate {
             content: content.to_string(),
             disguise: Some(disguise),
+            reference: None,
         };
         match self
             .request::<Message, MessageCreate>("POST", "messages", Some(message))

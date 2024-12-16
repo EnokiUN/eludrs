@@ -26,6 +26,6 @@ rand = "0.8.5"
 reqwest = { version = "0.11.13", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.147", features = ["derive"] }
 serde_json = "1.0.87"
-todel = { version = "0.4.0-alpha1", git = "https://github.com/eludris/todel" }
+todel = { version = "0.4.0-alpha1", git = "https://github.com/eludris/eludris", branch = "feature/spheres" }
 tokio = { version = "1.21.2", features = ["rt-multi-thread", "macros", "time"] }
 tokio-tungstenite = { version = "0.17.2", features = ["rustls-tls-webpki-roots"] }

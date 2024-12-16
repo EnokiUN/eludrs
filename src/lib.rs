@@ -57,7 +57,7 @@ pub use http::HttpClient;
 
 /// All the todel models re-exported
 pub mod todel {
-    pub use todel::*;
+    pub use todel::models::*;
 }
 
 /// The default rest url
