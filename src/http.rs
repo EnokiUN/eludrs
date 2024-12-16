@@ -112,31 +112,35 @@ impl HttpClient {
     }
 
     /// Send a message
-    pub async fn send_message<C: Display>(&self, content: C) -> Result<Message> {
-        let message = MessageCreate {
-            content: content.to_string(),
-            disguise: None,
-            reference: None, // TODO: Add references
-        };
-        match self
-            .request::<Message, MessageCreate>("POST", "messages", Some(message))
-            .await?
-        {
-            HttpResponse::Success(data) => Ok(data),
-            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not send message: {:?}", err)),
-        }
+    pub async fn send_message<C: Display>(
+        &self,
+        content: C,
+        reference: Option<u64>,
+    ) -> Result<Message> {
+        self.send_msg(content.to_string(), None, reference).await
     }
 
-    /// Send a message with a disguise
+    /// Send a message with a [`MessageDisguise`]
     pub async fn send_message_with_disguise<C: Display>(
         &self,
         content: C,
         disguise: MessageDisguise,
+        reference: Option<u64>,
+    ) -> Result<Message> {
+        self.send_msg(content.to_string(), Some(disguise), reference)
+            .await
+    }
+
+    async fn send_msg(
+        &self,
+        content: String,
+        disguise: Option<MessageDisguise>,
+        reference: Option<u64>,
     ) -> Result<Message> {
         let message = MessageCreate {
-            content: content.to_string(),
-            disguise: Some(disguise),
-            reference: None,
+            content,
+            disguise,
+            reference,
         };
         match self
             .request::<Message, MessageCreate>("POST", "messages", Some(message))
