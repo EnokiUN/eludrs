@@ -2,12 +2,12 @@ use crate::{models::HttpResponse, GatewayClient, REST_URL};
 use anyhow::Result;
 use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Map};
 use std::{fmt::Display, str::FromStr, time::Duration};
 use todel::models::{
-    ErrorResponse, InstanceInfo, Message, MessageCreate, MessageDisguise,
-    PasswordDeleteCredentials, ResetPassword, Session, SessionCreate, SessionCreated, UpdateUser,
-    UpdateUserProfile, User, UserCreate,
+    Category, ErrorResponse, InstanceInfo, Message, MessageCreate, MessageDisguise,
+    PasswordDeleteCredentials, ResetPassword, Session, SessionCreate, SessionCreated, Sphere,
+    SphereChannel, SphereType, UpdateUser, UpdateUserProfile, User, UserCreate,
 };
 use tokio::time;
 
@@ -61,22 +61,32 @@ impl HttpClient {
         }
     }
 
-    async fn request<T: for<'a> Deserialize<'a>, B: Serialize + Sized>(
+    async fn request<T: for<'a> Deserialize<'a>, Q: Serialize + ?Sized, B: Serialize + Sized>(
         &self,
         method: &str,
         path: &str,
+        query: Option<&Q>,
         body: Option<B>,
     ) -> Result<HttpResponse<T>> {
+        let mut builder = self
+            .client
+            .request(
+                Method::from_str(method)?,
+                format!("{}/{}", self.rest_url, path),
+            )
+            .header("Authorization", &self.token);
+        if let Some(body) = body {
+            builder = builder.json(&body);
+        }
+        if let Some(query) = query {
+            builder = builder.query(query);
+        }
+        let (client, request_res) = builder.build_split();
+        let request = request_res?;
         loop {
-            match self
-                .client
-                .request(
-                    Method::from_str(method)?,
-                    format!("{}/{}", self.rest_url, path),
-                )
-                .header("Authorization", &self.token)
-                .json(&body)
-                .send()
+            let request = request.try_clone().expect("Could not clone request");
+            match client
+                .execute(request)
                 .await?
                 .json::<HttpResponse<T>>()
                 .await
@@ -143,11 +153,43 @@ impl HttpClient {
             reference,
         };
         match self
-            .request::<Message, MessageCreate>("POST", "messages", Some(message))
+            .request::<Message, (), MessageCreate>("POST", "messages", None, Some(message))
             .await?
         {
             HttpResponse::Success(data) => Ok(data),
             HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not send message: {:?}", err)),
+        }
+    }
+
+    /// Get messages from a channel.
+    pub async fn get_messages(
+        &self,
+        channel_id: u64,
+        before: Option<u64>,
+        after: Option<u64>,
+        limit: Option<u8>,
+    ) -> Result<Vec<Message>> {
+        let mut query = vec![];
+        if let Some(before) = before {
+            query.push(("before", before.to_string()));
+        }
+        if let Some(after) = after {
+            query.push(("after", after.to_string()));
+        }
+        if let Some(limit) = limit {
+            query.push(("limit", limit.to_string()));
+        }
+        match self
+            .request::<Vec<Message>, Vec<(&str, String)>, ()>(
+                "GET",
+                &format!("channels/{}/messages", channel_id),
+                Some(&query),
+                None,
+            )
+            .await?
+        {
+            HttpResponse::Success(messages) => Ok(messages),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not get messages: {:?}", err)),
         }
     }
 
@@ -168,9 +210,10 @@ impl HttpClient {
         client: String,
     ) -> Result<SessionCreated> {
         match self
-            .request::<SessionCreated, SessionCreate>(
+            .request::<SessionCreated, (), SessionCreate>(
                 "POST",
                 "sessions",
+                None,
                 Some(SessionCreate {
                     identifier,
                     password,
@@ -188,9 +231,10 @@ impl HttpClient {
     /// Delete a session.
     pub async fn delete_session(&self, session_id: u64, password: String) -> Result<()> {
         match self
-            .request::<(), PasswordDeleteCredentials>(
+            .request::<(), (), PasswordDeleteCredentials>(
                 "DELETE",
                 &format!("sessions/{}", session_id),
+                None,
                 Some(PasswordDeleteCredentials { password }),
             )
             .await?
@@ -203,7 +247,7 @@ impl HttpClient {
     /// Get all sessions.
     pub async fn get_sessions(&self) -> Result<Vec<Session>> {
         match self
-            .request::<Vec<Session>, ()>("GET", "sessions", None)
+            .request::<Vec<Session>, (), ()>("GET", "sessions", None, None)
             .await?
         {
             HttpResponse::Success(sessions) => Ok(sessions),
@@ -219,9 +263,10 @@ impl HttpClient {
         password: String,
     ) -> Result<User> {
         match self
-            .request::<User, UserCreate>(
+            .request::<User, (), UserCreate>(
                 "POST",
                 "users",
+                None,
                 Some(UserCreate {
                     username,
                     email,
@@ -238,9 +283,10 @@ impl HttpClient {
     /// Delete the current user.
     pub async fn delete_user(&self, password: String) -> Result<()> {
         match self
-            .request::<(), PasswordDeleteCredentials>(
+            .request::<(), (), PasswordDeleteCredentials>(
                 "DELETE",
                 "users",
+                None,
                 Some(PasswordDeleteCredentials { password }),
             )
             .await?
@@ -252,7 +298,10 @@ impl HttpClient {
 
     /// Get the current user.
     pub async fn get_user(&self) -> Result<User> {
-        match self.request::<User, ()>("GET", "users/@me", None).await? {
+        match self
+            .request::<User, (), ()>("GET", "users/@me", None, None)
+            .await?
+        {
             HttpResponse::Success(user) => Ok(user),
             HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not get user: {:?}", err)),
         }
@@ -261,7 +310,7 @@ impl HttpClient {
     /// Update the current user.
     pub async fn update_user(&self, update: UpdateUser) -> Result<User> {
         match self
-            .request::<User, UpdateUser>("PATCH", "users", Some(update))
+            .request::<User, (), UpdateUser>("PATCH", "users", None, Some(update))
             .await?
         {
             HttpResponse::Success(user) => Ok(user),
@@ -272,7 +321,7 @@ impl HttpClient {
     /// Update the current user's profile.
     pub async fn update_user_profile(&self, update: UpdateUserProfile) -> Result<User> {
         match self
-            .request::<User, UpdateUserProfile>("PATCH", "users/profile", Some(update))
+            .request::<User, (), UpdateUserProfile>("PATCH", "users/profile", None, Some(update))
             .await?
         {
             HttpResponse::Success(user) => Ok(user),
@@ -285,7 +334,7 @@ impl HttpClient {
     /// Get a user by their id.
     pub async fn get_user_by_id(&self, user_id: u64) -> Result<User> {
         match self
-            .request::<User, ()>("GET", &format!("users/{}", user_id), None)
+            .request::<User, (), ()>("GET", &format!("users/{}", user_id), None, None)
             .await?
         {
             HttpResponse::Success(user) => Ok(user),
@@ -296,7 +345,7 @@ impl HttpClient {
     /// Get a user by their username.
     pub async fn get_user_by_username(&self, username: String) -> Result<User> {
         match self
-            .request::<User, ()>("GET", &format!("users/{}", username), None)
+            .request::<User, (), ()>("GET", &format!("users/{}", username), None, None)
             .await?
         {
             HttpResponse::Success(user) => Ok(user),
@@ -307,7 +356,12 @@ impl HttpClient {
     /// Verify your email address.
     pub async fn verify_user(&self, code: String) -> Result<()> {
         match self
-            .request::<(), u8>("POST", &format!("/users/verify?{code}"), None)
+            .request::<(), [(&str, String)], ()>(
+                "POST",
+                "/users/verify",
+                Some(&[("code", code)]),
+                None,
+            )
             .await?
         {
             HttpResponse::Success(_) => Ok(()),
@@ -318,7 +372,7 @@ impl HttpClient {
     /// Resend the verification email.
     pub async fn resend_verification(&self) -> Result<()> {
         match self
-            .request::<(), u8>("POST", "/users/resend-verification", None)
+            .request::<(), (), u8>("POST", "/users/resend-verification", None, None)
             .await?
         {
             HttpResponse::Success(_) => Ok(()),
@@ -332,9 +386,10 @@ impl HttpClient {
     /// Create password reset code.
     pub async fn create_password_reset(&self, email: String) -> Result<()> {
         match self
-            .request::<(), serde_json::Value>(
+            .request::<(), (), serde_json::Value>(
                 "POST",
                 "/users/reset-password",
+                None,
                 Some(json!({ "email": email })),
             )
             .await?
@@ -350,9 +405,10 @@ impl HttpClient {
     /// Reset your password.
     pub async fn reset_password(&self, code: u32, email: String, password: String) -> Result<()> {
         match self
-            .request::<(), ResetPassword>(
+            .request::<(), (), ResetPassword>(
                 "POST",
                 "/users/reset-password",
+                None,
                 Some(ResetPassword {
                     code,
                     email,
@@ -363,6 +419,254 @@ impl HttpClient {
         {
             HttpResponse::Success(_) => Ok(()),
             HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not reset password: {:?}", err)),
+        }
+    }
+
+    /// Get a channel by its id.
+    pub async fn get_channel(&self, channel_id: u64) -> Result<SphereChannel> {
+        match self
+            .request::<SphereChannel, (), ()>(
+                "GET",
+                &format!("channels/{}", channel_id),
+                None,
+                None,
+            )
+            .await?
+        {
+            HttpResponse::Success(channel) => Ok(channel),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not get channel: {:?}", err)),
+        }
+    }
+
+    /// Create a category.
+    pub async fn create_category(&self, sphere_id: u64, name: String) -> Result<Category> {
+        match self
+            .request::<Category, (), serde_json::Value>(
+                "POST",
+                &format!("spheres/{}/categories", sphere_id),
+                None,
+                Some(json!({ "name": name })),
+            )
+            .await?
+        {
+            HttpResponse::Success(category) => Ok(category),
+            HttpResponse::Error(err) => {
+                Err(anyhow::anyhow!("Could not create category: {:?}", err))
+            }
+        }
+    }
+
+    /// Edit a category.
+    pub async fn edit_category(
+        &self,
+        sphere_id: u64,
+        category_id: u64,
+        name: Option<String>,
+        position: Option<u8>,
+    ) -> Result<Category> {
+        let mut map = Map::new();
+        if let Some(name) = name {
+            map.insert("name".to_string(), name.into());
+        };
+        if let Some(position) = position {
+            map.insert("position".to_string(), position.into());
+        };
+
+        match self
+            .request::<Category, (), serde_json::Value>(
+                "PATCH",
+                &format!("spheres/{}/categories/{}", sphere_id, category_id),
+                None,
+                Some(serde_json::Value::Object(map)),
+            )
+            .await?
+        {
+            HttpResponse::Success(category) => Ok(category),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not edit category: {:?}", err)),
+        }
+    }
+
+    /// Delete a category.
+    pub async fn delete_category(&self, sphere_id: u64, category_id: u64) -> Result<()> {
+        match self
+            .request::<(), (), ()>(
+                "DELETE",
+                &format!("spheres/{}/categories/{}", sphere_id, category_id),
+                None,
+                None,
+            )
+            .await?
+        {
+            HttpResponse::Success(_) => Ok(()),
+            HttpResponse::Error(err) => {
+                Err(anyhow::anyhow!("Could not delete category: {:?}", err))
+            }
+        }
+    }
+
+    /// Create a text channel.
+    pub async fn create_text_channel(
+        &self,
+        sphere_id: u64,
+        name: String,
+        topic: Option<String>,
+        category_id: Option<u64>,
+    ) -> Result<SphereChannel> {
+        let mut map = Map::new();
+        map.insert("name".to_string(), name.into());
+        map.insert("type".to_string(), "text".into());
+        if let Some(topic) = topic {
+            map.insert("topic".to_string(), topic.into());
+        };
+        if let Some(category_id) = category_id {
+            map.insert("category_id".to_string(), category_id.into());
+        };
+
+        match self
+            .request::<SphereChannel, (), serde_json::Value>(
+                "POST",
+                &format!("spheres/{}/channels", sphere_id),
+                None,
+                Some(serde_json::Value::Object(map)),
+            )
+            .await?
+        {
+            HttpResponse::Success(channel) => Ok(channel),
+            HttpResponse::Error(err) => {
+                Err(anyhow::anyhow!("Could not create text channel: {:?}", err))
+            }
+        }
+    }
+
+    /// Edit a text channel.
+    pub async fn edit_text_channel(
+        &self,
+        sphere_id: u64,
+        channel_id: u64,
+        name: Option<String>,
+        topic: Option<String>,
+        position: Option<u8>,
+    ) -> Result<SphereChannel> {
+        let mut map = Map::new();
+        if let Some(name) = name {
+            map.insert("name".to_string(), name.into());
+        };
+        if let Some(topic) = topic {
+            map.insert("topic".to_string(), topic.into());
+        };
+        if let Some(position) = position {
+            map.insert("position".to_string(), position.into());
+        };
+
+        match self
+            .request::<SphereChannel, (), serde_json::Value>(
+                "PATCH",
+                &format!("spheres/{}/channels/{}", sphere_id, channel_id),
+                None,
+                Some(serde_json::Value::Object(map)),
+            )
+            .await?
+        {
+            HttpResponse::Success(channel) => Ok(channel),
+            HttpResponse::Error(err) => {
+                Err(anyhow::anyhow!("Could not edit text channel: {:?}", err))
+            }
+        }
+    }
+
+    /// Delete a channel.
+    pub async fn delete_channel(&self, sphere_id: u64, channel_id: u64) -> Result<()> {
+        match self
+            .request::<(), (), ()>(
+                "DELETE",
+                &format!("spheres/{}/channels/{}", sphere_id, channel_id),
+                None,
+                None,
+            )
+            .await?
+        {
+            HttpResponse::Success(_) => Ok(()),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not delete channel: {:?}", err)),
+        }
+    }
+
+    /// Create a sphere.
+    pub async fn create_sphere(
+        &self,
+        slug: String,
+        typ: SphereType,
+        description: Option<String>,
+        icon: Option<u64>,
+        banner: Option<u64>,
+    ) -> Result<Sphere> {
+        let mut map = Map::new();
+        map.insert("slug".to_string(), slug.into());
+        map.insert("type".to_string(), serde_json::to_value(typ)?);
+        if let Some(description) = description {
+            map.insert("description".to_string(), description.into());
+        };
+        if let Some(icon) = icon {
+            map.insert("icon".to_string(), icon.into());
+        };
+        if let Some(banner) = banner {
+            map.insert("banner".to_string(), banner.into());
+        };
+
+        match self
+            .request::<Sphere, (), serde_json::Value>(
+                "POST",
+                "spheres",
+                None,
+                Some(serde_json::Value::Object(map)),
+            )
+            .await?
+        {
+            HttpResponse::Success(sphere) => Ok(sphere),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not create sphere: {:?}", err)),
+        }
+    }
+
+    /// Get a sphere by its id.
+    pub async fn get_sphere(&self, sphere_id: u64) -> Result<Sphere> {
+        match self
+            .request::<Sphere, (), ()>("GET", &format!("spheres/{}", sphere_id), None, None)
+            .await?
+        {
+            HttpResponse::Success(sphere) => Ok(sphere),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not get sphere: {:?}", err)),
+        }
+    }
+
+    /// Get a sphere by its slug.
+    pub async fn get_sphere_by_slug(&self, slug: String) -> Result<Sphere> {
+        match self
+            .request::<Sphere, (), ()>("GET", &format!("spheres/{}", slug), None, None)
+            .await?
+        {
+            HttpResponse::Success(sphere) => Ok(sphere),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not get sphere: {:?}", err)),
+        }
+    }
+
+    /// Join a sphere by its id.
+    pub async fn join_sphere(&self, sphere_id: u64) -> Result<()> {
+        match self
+            .request::<(), (), ()>("GET", &format!("spheres/{}/join", sphere_id), None, None)
+            .await?
+        {
+            HttpResponse::Success(_) => Ok(()),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not join sphere: {:?}", err)),
+        }
+    }
+
+    /// Join a sphere by its slug.
+    pub async fn join_sphere_by_slug(&self, slug: String) -> Result<()> {
+        match self
+            .request::<(), (), ()>("GET", &format!("spheres/{}/join", slug), None, None)
+            .await?
+        {
+            HttpResponse::Success(_) => Ok(()),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not join sphere: {:?}", err)),
         }
     }
 }
