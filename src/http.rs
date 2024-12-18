@@ -124,25 +124,29 @@ impl HttpClient {
     /// Send a message
     pub async fn send_message<C: Display>(
         &self,
+        channel_id: u64,
         content: C,
         reference: Option<u64>,
     ) -> Result<Message> {
-        self.send_msg(content.to_string(), None, reference).await
+        self.send_msg(channel_id, content.to_string(), None, reference)
+            .await
     }
 
     /// Send a message with a [`MessageDisguise`]
     pub async fn send_message_with_disguise<C: Display>(
         &self,
+        channel_id: u64,
         content: C,
         disguise: MessageDisguise,
         reference: Option<u64>,
     ) -> Result<Message> {
-        self.send_msg(content.to_string(), Some(disguise), reference)
+        self.send_msg(channel_id, content.to_string(), Some(disguise), reference)
             .await
     }
 
     async fn send_msg(
         &self,
+        channel_id: u64,
         content: String,
         disguise: Option<MessageDisguise>,
         reference: Option<u64>,
@@ -153,11 +157,16 @@ impl HttpClient {
             reference,
         };
         match self
-            .request::<Message, (), MessageCreate>("POST", "messages", None, Some(message))
+            .request::<Message, (), MessageCreate>(
+                "POST",
+                &format!("/channels/{}/messages", channel_id),
+                None,
+                Some(message),
+            )
             .await?
         {
             HttpResponse::Success(data) => Ok(data),
-            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could not send message: {:?}", err)),
+            HttpResponse::Error(err) => Err(anyhow::anyhow!("Could) not send message: {:?}", err)),
         }
     }
 
